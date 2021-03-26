@@ -373,18 +373,47 @@ def make_test_tensor(path, csv):
     print("len test images:", len(test_images))
     tensor_x = torch.Tensor(test_images) # transform to torch tensor
     tensor_y = torch.Tensor(test_labels)
-
-    my_dataset = TensorDataset(tensor_x,tensor_y) # create your datset
     
-    return my_dataset
+    reshaped_x = tensor_x.reshape(tensor_x.shape[0], tensor_x.shape[3], tensor_x.shape[1], tensor_x.shape[2])
+    print(reshaped_x.shape)
+    #my_dataset = TensorDataset(tensor_x,tensor_y) # create your datset
+    #return my_dataset
+    
+    return reshaped_x, tensor_y
 
+
+class CustomTensorDataset(Dataset):
+    """TensorDataset with support of transforms.
+    """
+    def __init__(self, tensors, transform=None):
+        
+        assert all(tensors[0].size(0) == tensor.size(0) for tensor in tensors)
+        self.tensors = tensors
+        self.transform = transform
+
+    def __getitem__(self, index):
+        x = self.tensors[0][index]
+        print("Originals:", x.shape)
+
+        if self.transform:
+            x = self.transform(x)
+            print(x.shape)
+
+        y = self.tensors[1][index]
+        return x, y
+
+    def __len__(self):
+        return self.tensors[0].size(0)
+    
+# ===================================================================    
+    
 def get_tensor_dataloaders(dataset, batch_size=64):
     assert dataset in TENSOR_DATASETS, f"Unknown datasets {dataset}"
 
     if 'counterfactual' in dataset:
         tensor = torch.load(f'mnists/data/{dataset}.pth') #mnists/data/Eurecom.pth
         print("loaded tensor")
-        print(tensor)
+        #print(tensor)
         ds_train = TensorDataset(*tensor[:2]) #ds_train converts these into tensors
         print("ds_train loaded under counterfactual")
         dataset = dataset.replace('_counterfactual', '') #use the counterfactuals instead
@@ -406,11 +435,17 @@ def get_tensor_dataloaders(dataset, batch_size=64):
                                       annots_csv = "/home/local/AD/cordun1/experiments/data/labels/Eur_labels2_cfg.csv", train=False),
                                            batch_size=batch_size, shuffle=True, drop_last=True, num_workers=4)
         """
-        ds_test = make_test_tensor(path = test_root, csv = annots_csv)
+        test_x, test_y = make_test_tensor(path = test_root, csv = annots_csv)
+        transforms_test = transforms.Resize((32, 32), Image.BICUBIC)
+        ds_test = CustomTensorDataset(tensors=(test_x, test_y), transform=transforms_test)
         print("ds_test for Eurecom loaded")
+        
+        test_T = transforms.Compose([transforms.Resize(32)])
         
         dl_train = DataLoader(ds_train, batch_size=batch_size, num_workers=4,
                           shuffle=True, pin_memory=True)
+        
+        # load ds_test in here
         dl_test = DataLoader(ds_test, batch_size=batch_size*10, num_workers=4,
                          shuffle=False, pin_memory=True)
         
