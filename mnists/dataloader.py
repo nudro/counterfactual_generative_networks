@@ -12,6 +12,8 @@ from torch.utils.data import Dataset, DataLoader, TensorDataset
 import glob
 import os
 import pandas as pd
+from numpy import asarray
+
 
 
 class ColoredMNIST(Dataset):
@@ -130,7 +132,7 @@ class WildlifeMNIST(Dataset):
 
         self.ims_digit = torch.stack([ims, ims, ims], dim=1)
         self.labels = labels
-        print("WildlifeMNIST labels:", self.labels)
+        #print("WildlifeMNIST labels:", self.labels)
 
         # texture paths
         background_dir = Path('.') / 'mnists' / 'data' / 'textures' / 'background'
@@ -167,7 +169,7 @@ class WildlifeMNIST(Dataset):
             'ims': ims,
             'labels': self.labels[idx],
         }
-        print("WildlifeMNIST", ret)
+        #print("WildlifeMNIST", ret)
         return ret
 
     def __len__(self):
@@ -195,13 +197,18 @@ class Eurecom(Dataset):
         
         if train: # if train, then the files are here at this path
             self.files = sorted(glob.glob(os.path.join(root, "train") + "/*.*"))
-            t_list = [transforms.Resize(32),
-                      transforms.Grayscale(num_output_channels=1)]
+            #t_list = [transforms.Resize(32),
+            #          transforms.Grayscale(num_output_channels=1)]
+            t_list = [transforms.Resize(32),transforms.ColorJitter(brightness=0.1,
+                                                                   contrast=0.1,
+                                                                   saturation=0.1,
+                                                                   hue=0.1)]
             
         else: # if it's test, then it's under subdir "test"
             self.files.extend(sorted(glob.glob(os.path.join(root, "test") + "/*.*")))
-            t_list = [transforms.Resize(32), 
-                      transforms.Grayscale(num_output_channels=1)]
+            #t_list = [transforms.Resize(32), 
+            #          transforms.Grayscale(num_output_channels=1)]
+            t_list = [transforms.Resize(32)]
 
         t_list += [transforms.ToTensor()] # all of that plus make it into tensor
         
@@ -247,11 +254,13 @@ class Eurecom(Dataset):
         i = labels if self.train else np.random.randint(10) #index is the label retrieved like 0,1,3, etc., if test assign random int
         back_text = Image.open(self.background_textures[i])
         back_text = self.T_texture(back_text)
+        print("Back Text:", back_text.shape)
 
         # 4 - get textures: Objects
         i = labels if self.train else np.random.randint(10)
         obj_text = Image.open(self.object_textures[i])
         obj_text = self.T_texture(obj_text)
+        print("Obj Tex:", obj_text.shape)
 
         """
         # get digit
@@ -334,31 +343,86 @@ TENSOR_DATASETS = ['colored_MNIST', 'colored_MNIST_counterfactual',
 
 #=====GET TENSOR DATALOADERS============================================
 
+# Used for the train_classifier.py
+
+# ====> helper function for get_tensor_dataloaders======
+def make_test_tensor(path, csv):
+    # Get the test labels, there should be 105 
+    df = pd.read_csv(csv, header=None)
+    df = df[1:]
+    labels = df[1].values
+    labels = labels.astype(int)
+    test_labels = labels[945:]
+    print("len test_labels:", len(test_labels))
+    
+    # Read in images as arrays
+    test_images = []
+    dirs = os.listdir(path)
+    for item in dirs:
+        #print(item)
+        fullpath = os.path.join(path, item)
+        #print(fullpath)
+        if os.path.isfile(os.path.join(fullpath)):
+            im = Image.open(fullpath)
+            #print("image opened")
+            numpydata = asarray(im)
+            #arr = Image.fromarray(np.uint8(im))
+            #print(arr)
+            #print(arr.size)
+            test_images.append(numpydata)
+    print("len test images:", len(test_images))
+    tensor_x = torch.Tensor(test_images) # transform to torch tensor
+    tensor_y = torch.Tensor(test_labels)
+
+    my_dataset = TensorDataset(tensor_x,tensor_y) # create your datset
+    
+    return my_dataset
+
 def get_tensor_dataloaders(dataset, batch_size=64):
     assert dataset in TENSOR_DATASETS, f"Unknown datasets {dataset}"
 
     if 'counterfactual' in dataset:
         tensor = torch.load(f'mnists/data/{dataset}.pth') #mnists/data/Eurecom.pth
+        print("loaded tensor")
+        print(tensor)
         ds_train = TensorDataset(*tensor[:2]) #ds_train converts these into tensors
+        print("ds_train loaded under counterfactual")
         dataset = dataset.replace('_counterfactual', '') #use the counterfactuals instead
+        print("dataset replaced")
     else:
         ds_train = TensorDataset(*torch.load(f'mnists/data/{dataset}_train.pth'))
+        print("ds_train loaded")
     
-    # only the training set contains counterfactuals; test stays as test
-    ds_test = TensorDataset(*torch.load(f'mnists/data/{dataset}_test.pth'))
-
     if 'Eurecom' in dataset:
+        
+        test_root = "/home/local/AD/cordun1/experiments/data/Eurecom_Thermal/test"
+        annots_csv = "/home/local/AD/cordun1/experiments/data/labels/Eur_labels2_cfg.csv"
+        
+        """
         dl_train = DataLoader(Eurecom(root = "/home/local/AD/cordun1/experiments/data/Eurecom_Thermal", 
                                            annots_csv = "/home/local/AD/cordun1/experiments/data/labels/Eur_labels2_cfg.csv", train=True),
-                                               batch_size=batch_size, shuffle=True, drop_last=True, num_workers=workers)
+                                               batch_size=batch_size, shuffle=True, drop_last=True, num_workers=4)
         dl_test = DataLoader(Eurecom(root = "/home/local/AD/cordun1/experiments/data/Eurecom_Thermal", 
                                       annots_csv = "/home/local/AD/cordun1/experiments/data/labels/Eur_labels2_cfg.csv", train=False),
-                                           batch_size=batch_size, shuffle=True, drop_last=True, num_workers=workers)
+                                           batch_size=batch_size, shuffle=True, drop_last=True, num_workers=4)
+        """
+        ds_test = make_test_tensor(path = test_root, csv = annots_csv)
+        print("ds_test for Eurecom loaded")
+        
+        dl_train = DataLoader(ds_train, batch_size=batch_size, num_workers=4,
+                          shuffle=True, pin_memory=True)
+        dl_test = DataLoader(ds_test, batch_size=batch_size*10, num_workers=4,
+                         shuffle=False, pin_memory=True)
         
     else:
+        # only the training set contains counterfactuals; test stays as test
+        ds_test = TensorDataset(*torch.load(f'mnists/data/{dataset}_test.pth'))
+        print("ds_test loaded")
+
         dl_train = DataLoader(ds_train, batch_size=batch_size, num_workers=4,
                           shuffle=True, pin_memory=True)
         dl_test = DataLoader(ds_test, batch_size=batch_size*10, num_workers=4,
                          shuffle=False, pin_memory=True)
 
+    print("ready to return dl_train and dl_test")    
     return dl_train, dl_test
